@@ -1,5 +1,5 @@
 """
-GT(VIA 형식 gt.json)의 KV(key/value) 영역을 이미지 위에 시각화합니다.
+VIA JSON(VIA 형식 주석 파일, 예: result.json)의 KV(key/value) 영역을 이미지 위에 시각화합니다.
 inference_demo.py → util.utils.visualize_kv_result 와 유사한 박스·라벨 스타일을 사용합니다.
 """
 
@@ -17,6 +17,18 @@ import matplotlib.font_manager as fm
 import matplotlib.image as img
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+
+mpl.use("Agg")
+
+COLOR_KEY = (0, 0, 255)
+COLOR_VALUE = (255, 0, 0)
+
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"})
+
+# 시각화 기본값 (키/값 박스 아래 라벨)
+VIS_FONTSIZE = 14
+VIS_FONT_MARGIN_RATIO = 1.5
+VIS_MAX_WRAP_WIDTH_FACTOR = 1.7
 
 
 def _configure_matplotlib_font() -> None:
@@ -58,9 +70,6 @@ def _configure_matplotlib_font() -> None:
 
 _configure_matplotlib_font()
 
-COLOR_KEY = (0, 0, 255)
-COLOR_VALUE = (255, 0, 0)
-
 
 def _norm_rgb(c: tuple[int, int, int]) -> tuple[float, float, float]:
     return tuple(x / 255.0 for x in c)
@@ -94,8 +103,8 @@ def split_text_by_bbox(
     return lines
 
 
-def load_gt_by_filename(gt_path: Path) -> dict[str, dict]:
-    with gt_path.open(encoding="utf-8") as f:
+def load_via_json_by_filename(via_json_path: Path) -> dict[str, dict]:
+    with via_json_path.open(encoding="utf-8") as f:
         data = json.load(f)
     by_name: dict[str, dict] = {}
     for entry in data.values():
@@ -106,8 +115,8 @@ def load_gt_by_filename(gt_path: Path) -> dict[str, dict]:
     return by_name
 
 
-def iter_kv_regions(regions: list[dict]) -> list[tuple[dict, str]]:
-    """Returns (region, sub_class) for key/value rects only."""
+def list_kv_rect_regions(regions: list[dict]) -> list[tuple[dict, str]]:
+    """key/value 서브클래스인 rect 영역만 (region, sub_class) 리스트로 반환."""
     out: list[tuple[dict, str]] = []
     for region in regions:
         ra = region.get("region_attributes") or {}
@@ -121,83 +130,89 @@ def iter_kv_regions(regions: list[dict]) -> list[tuple[dict, str]]:
     return out
 
 
-def visualize_gt_kv(
+def _value_display_text(ra: dict) -> str:
+    if "value" in ra and ra.get("value") is not None:
+        return str(ra["value"])
+    return ra.get("text") or ""
+
+
+def _label_for_kv_region(region: dict, sub: str) -> str:
+    ra = region.get("region_attributes") or {}
+    cls = ra.get("class") or ""
+    if sub == "key":
+        text_content = ra.get("text") or ""
+        raw = f"{cls}: {text_content}".strip() if cls else text_content.strip()
+    else:
+        text_content = _value_display_text(ra)
+        raw = f"{cls}: {text_content}".strip() if cls else text_content.strip()
+    return raw.replace("☑", "<O>").replace("☐", "<X>").replace("$", r"\$")
+
+
+def _add_kv_annotation(
+    ax,
+    region: dict,
+    sub: str,
+    fontsize: float,
+    renderer,
+    fig,
+) -> None:
+    shape = region.get("shape_attributes") or {}
+    x = float(shape["x"])
+    y = float(shape["y"])
+    w = float(shape["width"])
+    h = float(shape["height"])
+
+    box_color = COLOR_KEY if sub == "key" else COLOR_VALUE
+    edge = _norm_rgb(box_color)
+    ax.add_patch(
+        patches.Rectangle(
+            (x, y),
+            w,
+            h,
+            edgecolor=edge,
+            linewidth=2,
+            fill=False,
+        )
+    )
+
+    label = _label_for_kv_region(region, sub)
+    max_wrap = w * VIS_MAX_WRAP_WIDTH_FACTOR
+    lines = split_text_by_bbox(label, fontsize, max_wrap, renderer, fig)
+    bottom = y + h
+    for i, line in enumerate(lines):
+        ax.text(
+            x,
+            bottom + (fontsize * VIS_FONT_MARGIN_RATIO * (i + 1)),
+            line,
+            fontsize=fontsize,
+            fontweight="bold",
+            color="blue",
+            va="bottom",
+            ha="left",
+            bbox=dict(
+                facecolor="lightgray",
+                alpha=0.6,
+                edgecolor="none",
+                boxstyle="round,pad=0",
+            ),
+        )
+
+
+def visualize_via_json_kv(
     image_path: Path,
     regions: list[dict],
     output_path: Path,
     dpi: int = 150,
 ) -> None:
-    mpl.use("Agg")
     image = img.imread(str(image_path))
     fig, ax = plt.subplots(figsize=(30, 30))
     ax.imshow(image)
 
-    fontsize = 14
-    font_margin_ratio = 1.5
-    max_box_threshold = 1.7
+    fontsize = VIS_FONTSIZE
     renderer = fig.canvas.get_renderer()
 
-    for region, sub in iter_kv_regions(regions):
-        ra = region.get("region_attributes") or {}
-        shape = region.get("shape_attributes") or {}
-        x = float(shape["x"])
-        y = float(shape["y"])
-        w = float(shape["width"])
-        h = float(shape["height"])
-
-        box_color = COLOR_KEY if sub == "key" else COLOR_VALUE
-        edge = _norm_rgb(box_color)
-        ax.add_patch(
-            patches.Rectangle(
-                (x, y),
-                w,
-                h,
-                edgecolor=edge,
-                linewidth=2,
-                fill=False,
-            )
-        )
-
-        if sub == "key":
-            cls = ra.get("class") or ""
-            text_content = ra.get("text") or ""
-            label = f"{cls}: {text_content}".strip() if cls else text_content.strip()
-        else:
-            cls = ra.get("class") or ""
-            text_content = ra.get("value")
-            if text_content is None:
-                text_content = ra.get("text") or ""
-            else:
-                text_content = str(text_content)
-            label = f"{cls}: {text_content}".strip() if cls else text_content.strip()
-        label = label.replace("☑", "<O>").replace("☐", "<X>").replace("$", r"\$")
-
-        box_width = w
-        lines = split_text_by_bbox(
-            label,
-            fontsize,
-            box_width * max_box_threshold,
-            renderer,
-            fig,
-        )
-        bottom = y + h
-        for i, line in enumerate(lines):
-            ax.text(
-                x,
-                bottom + (fontsize * font_margin_ratio * (i + 1)),
-                line,
-                fontsize=fontsize,
-                fontweight="bold",
-                color="blue",
-                va="bottom",
-                ha="left",
-                bbox=dict(
-                    facecolor="lightgray",
-                    alpha=0.6,
-                    edgecolor="none",
-                    boxstyle="round,pad=0",
-                ),
-            )
+    for region, sub in list_kv_rect_regions(regions):
+        _add_kv_annotation(ax, region, sub, fontsize, renderer, fig)
 
     plt.axis("scaled")
     plt.axis("off")
@@ -211,10 +226,18 @@ def visualize_gt_kv(
     plt.close()
 
 
+def list_image_filenames(images_dir: Path) -> list[str]:
+    return sorted(
+        n
+        for n in os.listdir(images_dir)
+        if Path(n).suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
 def main() -> None:
     base = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(
-        description="dataset_sampled/images 이미지에 gt.json의 KV 영역을 표시해 images_kv에 저장합니다."
+        description="dataset_sampled/images 이미지에 VIA JSON의 KV 영역을 표시해 images_kv에 저장합니다."
     )
     parser.add_argument(
         "--images-dir",
@@ -223,10 +246,10 @@ def main() -> None:
         help="입력 이미지 디렉터리",
     )
     parser.add_argument(
-        "--gt-json",
+        "--via-json",
         type=Path,
         default=base / "dataset_sampled" / "gt.json",
-        help="VIA 형식 JSON 경로 (gt.json 또는 main.py가 만든 result/result.json)",
+        help="VIA 형식 JSON 경로 (예: dataset_sampled/gt.json, result/result.json)",
     )
     parser.add_argument(
         "--output-dir",
@@ -249,32 +272,27 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.loglevel.upper()))
 
-    if not args.gt_json.is_file():
-        raise FileNotFoundError(f"gt.json not found: {args.gt_json}")
+    if not args.via_json.is_file():
+        raise FileNotFoundError(f"VIA JSON not found: {args.via_json}")
     if not args.images_dir.is_dir():
         raise FileNotFoundError(f"images directory not found: {args.images_dir}")
 
-    gt_by_file = load_gt_by_filename(args.gt_json)
-    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
-    names = sorted(
-        n
-        for n in os.listdir(args.images_dir)
-        if Path(n).suffix.lower() in exts
-    )
+    via_json_by_file = load_via_json_by_filename(args.via_json)
+    names = list_image_filenames(args.images_dir)
 
     written = 0
     for name in names:
         in_path = args.images_dir / name
         out_path = args.output_dir / name
-        entry = gt_by_file.get(name)
+        entry = via_json_by_file.get(name)
         if not entry:
-            logging.warning("GT에 없는 파일 — 건너뜀: %s", name)
+            logging.warning("VIA JSON에 없는 파일 — 건너뜀: %s", name)
             continue
         regions = entry.get("regions") or []
-        if not iter_kv_regions(regions):
+        if not list_kv_rect_regions(regions):
             logging.warning("KV(key/value) 영역 없음 — 건너뜀: %s", name)
             continue
-        visualize_gt_kv(in_path, regions, out_path, dpi=args.dpi)
+        visualize_via_json_kv(in_path, regions, out_path, dpi=args.dpi)
         written += 1
         logging.info("저장: %s", out_path)
 
