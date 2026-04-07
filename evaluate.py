@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 SEP = "-" * 80
 
@@ -276,9 +278,9 @@ def assert_same_file_keys(gt_by: dict[str, dict], res_by: dict[str, dict]) -> li
     )
 
 
-def print_file_class_metrics(m: FileClassMetrics) -> None:
+def format_file_class_metrics(m: FileClassMetrics) -> str:
     n_gt, n_pr = len(m.gt_rects), len(m.pred_rects)
-    print(
+    return (
         f"file={m.filename}\n"
         f"  class={m.class_name}\n"
         f"  ref({len(m.ref)}): {m.ref!r}\n"
@@ -292,29 +294,35 @@ def print_file_class_metrics(m: FileClassMetrics) -> None:
     )
 
 
+def print_file_class_metrics(m: FileClassMetrics) -> None:
+    print(format_file_class_metrics(m), end="")
+
+
 def evaluate_cer(
     common: list[str], gt_by: dict[str, dict], res_by: dict[str, dict]
-) -> tuple[list[float], int, int, list[float]]:
-    """CER과 병합 bbox IoU를 계산.
-    반환: (per-item CER, 총 편집거리, 총 ref 길이, 파일·class별 병합 IoU)
-    """
-    all_cer: list[float] = []
-    total_dist = 0
-    total_ref_len = 0
-    mean_ious_per_pair: list[float] = []
+) -> list[FileClassMetrics]:
+    """파일·class별 메트릭 목록."""
+    metrics: list[FileClassMetrics] = []
 
     for fn in common:
         gt_e = gt_by[fn]
         res_e = res_by[fn]
         for cls in iter_file_class_pairs(gt_e):
             m = compute_file_class_metrics(fn, gt_e, res_e, cls)
-            all_cer.append(m.cer)
-            total_dist += m.edit_distance
-            total_ref_len += len(m.ref)
-            mean_ious_per_pair.append(m.iou)
+            metrics.append(m)
             print_file_class_metrics(m)
 
-    return all_cer, total_dist, total_ref_len, mean_ious_per_pair
+    return metrics
+
+
+def aggregate_from_metrics(
+    metrics: list[FileClassMetrics],
+) -> tuple[list[float], int, int, list[float]]:
+    all_cer = [m.cer for m in metrics]
+    total_dist = sum(m.edit_distance for m in metrics)
+    total_ref_len = sum(len(m.ref) for m in metrics)
+    mean_ious = [m.iou for m in metrics]
+    return all_cer, total_dist, total_ref_len, mean_ious
 
 
 def print_summary(
@@ -338,6 +346,112 @@ def print_summary(
         )
 
 
+def write_detail_txt(path: Path, metrics: list[FileClassMetrics]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for m in metrics:
+            f.write(format_file_class_metrics(m))
+
+
+def _macro_micro_for_group(ms: list[FileClassMetrics]) -> tuple[float, float, int]:
+    """한 그룹(같은 class 또는 같은 파일)의 Macro CER, Micro CER, 항목 수."""
+    macro = sum(x.cer for x in ms) / len(ms)
+    dist_sum = sum(x.edit_distance for x in ms)
+    ref_sum = sum(len(x.ref) for x in ms)
+    micro = (dist_sum / ref_sum) if ref_sum > 0 else 0.0
+    return macro, micro, len(ms)
+
+
+def _macro_micro_rows_by_key(
+    metrics: list[FileClassMetrics],
+    key: Callable[[FileClassMetrics], str],
+) -> list[tuple[str, float, float, int]]:
+    """metrics를 key로 묶어 각 그룹의 Macro/Micro CER 행을 만든다 (class별·파일별 공통)."""
+    grouped: dict[str, list[FileClassMetrics]] = defaultdict(list)
+    for m in metrics:
+        grouped[key(m)].append(m)
+    rows: list[tuple[str, float, float, int]] = []
+    for k in sorted(grouped.keys()):
+        macro, micro, n = _macro_micro_for_group(grouped[k])
+        rows.append((k, macro, micro, n))
+    return rows
+
+
+def write_summary_txt(
+    path: Path,
+    metrics: list[FileClassMetrics],
+    all_cer: list[float],
+    total_dist: int,
+    total_ref_len: int,
+    mean_ious_per_pair: list[float],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+
+    lines.append("전체 요약")
+    lines.append("-" * 40)
+    if all_cer:
+        macro = sum(all_cer) / len(all_cer)
+        lines.append(f"Macro 평균 CER: {macro:.4f} (파일·class 항목 수: {len(all_cer)})")
+    else:
+        lines.append("Macro 평균 CER: (항목 없음)")
+    if total_ref_len > 0:
+        micro = total_dist / total_ref_len
+        lines.append(f"Micro 평균 CER: {micro:.4f} (총 ref 글자 수: {total_ref_len})")
+    else:
+        lines.append("Micro 평균 CER: (ref 길이 합 0)")
+    if mean_ious_per_pair:
+        avg_iou = sum(mean_ious_per_pair) / len(mean_ious_per_pair)
+        lines.append(
+            f"평균 IoU (병합 bbox): {avg_iou:.4f} "
+            f"(파일·class 항목 수: {len(mean_ious_per_pair)})"
+        )
+    else:
+        lines.append("평균 IoU: (항목 없음)")
+
+    lines.append("")
+    lines.append("전체 파일에 대한 class별 CER")
+    lines.append(
+        "(Macro: 해당 class가 등장하는 파일·class 항목별 CER의 산술평균, "
+        "Micro: 해당 class 항목들의 총 편집거리 / 총 ref 길이)"
+    )
+    lines.append("-" * 40)
+    class_rows = _macro_micro_rows_by_key(metrics, lambda m: m.class_name)
+    if class_rows:
+        w_class = max(len(r[0]) for r in class_rows)
+        lines.append(
+            f"{'class':<{w_class}}  {'Macro_CER':>12}  {'Micro_CER':>12}  {'n':>4}"
+        )
+        for cls, macro_c, micro_c, n in class_rows:
+            lines.append(
+                f"{cls:<{w_class}}  {macro_c:12.4f}  {micro_c:12.4f}  {n:4d}"
+            )
+    else:
+        lines.append("(항목 없음)")
+
+    lines.append("")
+    lines.append("전체 class에 대한 파일별 CER")
+    lines.append(
+        "(Macro: 해당 파일 내 class별 CER의 산술평균, "
+        "Micro: 해당 파일 내 총 편집거리 / 총 ref 길이)"
+    )
+    lines.append("-" * 40)
+    file_rows = _macro_micro_rows_by_key(metrics, lambda m: m.filename)
+    if file_rows:
+        w_file = max(len(r[0]) for r in file_rows)
+        lines.append(
+            f"{'filename':<{w_file}}  {'Macro_CER':>12}  {'Micro_CER':>12}  {'n_cls':>5}"
+        )
+        for fn, macro_c, micro_c, n in file_rows:
+            lines.append(
+                f"{fn:<{w_file}}  {macro_c:12.4f}  {micro_c:12.4f}  {n:5d}"
+            )
+    else:
+        lines.append("(항목 없음)")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def parse_args(base: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="gt.json vs result.json — 파일·class별 CER 및 value bbox IoU"
@@ -353,6 +467,18 @@ def parse_args(base: Path) -> argparse.Namespace:
         type=Path,
         default=base / "result" / "result.json",
         help="추론 결과 (gt.json과 동일 스키마)",
+    )
+    parser.add_argument(
+        "--detail-txt",
+        type=Path,
+        default=base / "result" / "detail.txt",
+        help="파일·class별 상세 결과 저장 경로",
+    )
+    parser.add_argument(
+        "--summary-txt",
+        type=Path,
+        default=base / "result" / "summary.txt",
+        help="요약(전체·class별·파일별 CER 등) 저장 경로",
     )
     return parser.parse_args()
 
@@ -373,9 +499,22 @@ def main() -> None:
     print(f"비교 대상 파일 수: {len(common)}")
     print(SEP)
 
-    all_cer, total_dist, total_ref_len, mean_ious = evaluate_cer(
-        common, gt_by, res_by
+    metrics = evaluate_cer(common, gt_by, res_by)
+    all_cer, total_dist, total_ref_len, mean_ious = aggregate_from_metrics(metrics)
+
+    write_detail_txt(args.detail_txt, metrics)
+    write_summary_txt(
+        args.summary_txt,
+        metrics,
+        all_cer,
+        total_dist,
+        total_ref_len,
+        mean_ious,
     )
+    print(f"상세 결과 저장: {args.detail_txt}")
+    print(f"요약 저장: {args.summary_txt}")
+    print()
+
     print_summary(all_cer, total_dist, total_ref_len, mean_ious)
 
 
