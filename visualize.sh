@@ -1,0 +1,1 @@
+uv run visualize.py --via-json result/result.json --images-dir dataset_sampled/images --output-dir dataset_sampled/images_kv
