@@ -53,10 +53,12 @@ def _configure_matplotlib_font() -> None:
             "NanumGothic",
         )
     else:
+        # Linux: matplotlib가 Variable TTC의 패밀리명을 "Noto Sans CJK KR"로 잘 못 잡는 경우가 있어
+        # Nanum / Noto JP 순으로 두면 findfont 경고 없이 한글 표시 가능 (동일 Noto TTC에 KR 글립 포함).
         candidates = (
-            "Noto Sans CJK KR",
-            "Noto Sans CJK JP",
             "NanumGothic",
+            "Noto Sans CJK JP",
+            "Noto Sans CJK KR",
             "Noto Sans CJK",
         )
 
