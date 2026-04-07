@@ -1,24 +1,20 @@
 from __future__ import annotations
 
+import argparse
 import json
-import os
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 import requests
 
+# --- paths & API defaults (script entrypoint uses these) ---
 
-img_dir = "./dataset_sampled/images/"
-result_dir = "./result/"
-output_path = os.path.join(result_dir, "result.json")
-jsonl_path = os.path.join(result_dir, "response.jsonl")
-
-url = "https://beta.zixy.io/cognition-api/api/v1/workflows/api/apis"
-
-payload = {
-    "params": '{"api_key": "03e57dac1847ddfa296b8813f17c21c21de945e330f39b7"}',
-    "api_option": {
-        "async_mode": False,
-        "timeout": 300.0,
-    },
-}
+# IMG_DIR = Path("./dataset_sampled/images/")
+# RESULT_DIR = Path("./result/")
+WORKFLOW_URL = "https://beta.zixy.io/cognition-api/api/v1/workflows/api/apis"
+HTTP_TIMEOUT = 300.0
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
@@ -31,19 +27,29 @@ CONTENT_TYPES = {
 }
 
 
-def content_type_for(path: str) -> str:
-    ext = os.path.splitext(path)[1].lower()
+def workflow_payload() -> dict[str, Any]:
+    return {
+        "params": '{"api_key": "03e57dac1847ddfa296b8813f17c21c21de945e330f39b7"}',
+        "api_option": {
+            "async_mode": False,
+            "timeout": HTTP_TIMEOUT,
+        },
+    }
+
+
+def content_type_for(path: str | Path) -> str:
+    ext = Path(path).suffix.lower()
     return CONTENT_TYPES.get(ext, "application/octet-stream")
 
 
-def parse_response_body(response: requests.Response):
+def parse_response_body(response: requests.Response) -> Any:
     try:
         return response.json()
     except (ValueError, json.JSONDecodeError):
         return response.text
 
 
-def extract_inference_result(body) -> dict | None:
+def extract_inference_result(body: Any) -> dict | None:
     if not isinstance(body, dict):
         return None
     resp = body.get("response")
@@ -53,7 +59,7 @@ def extract_inference_result(body) -> dict | None:
     return inf if isinstance(inf, dict) else None
 
 
-def _as_str_list(v) -> list[str]:
+def _as_str_list(v: Any) -> list[str]:
     if v is None:
         return []
     if isinstance(v, list):
@@ -61,7 +67,7 @@ def _as_str_list(v) -> list[str]:
     return [str(v)]
 
 
-def _normalize_boxes(box_raw) -> list[list[float]]:
+def _normalize_boxes(box_raw: Any) -> list[list[float]]:
     """kv block의 box: [[x,y,w,h], ...] 또는 [x,y,w,h]."""
     if not box_raw:
         return [[0.0, 0.0, 0.0, 0.0]]
@@ -78,7 +84,7 @@ def _normalize_boxes(box_raw) -> list[list[float]]:
     return [[0.0, 0.0, 0.0, 0.0]]
 
 
-def box_to_shape_attributes(four: list[float]) -> dict:
+def box_to_shape_attributes(four: list[float]) -> dict[str, Any]:
     """4실수: 기본은 x, y, width, height. width/height가 0 이하면 (x1,y1,x2,y2)로 해석 시도."""
     a, b, c, d = four
     w, h = c, d
@@ -95,8 +101,8 @@ def box_to_shape_attributes(four: list[float]) -> dict:
 
 
 def _make_value_region(
-    shape: dict, class_name: str, text: str, value: str
-) -> dict:
+    shape: dict[str, Any], class_name: str, text: str, value: str
+) -> dict[str, Any]:
     """API kv의 text·value를 모두 region_attributes에 보존."""
     return {
         "shape_attributes": shape,
@@ -109,9 +115,9 @@ def _make_value_region(
     }
 
 
-def build_regions_from_kv(kv: dict) -> list[dict]:
+def build_regions_from_kv(kv: dict[str, Any]) -> list[dict[str, Any]]:
     """kv의 class, text, value, box만 사용해 VIA regions 생성 (value만, API에 key 없음)."""
-    regions: list[dict] = []
+    regions: list[dict[str, Any]] = []
     items = sorted(
         kv.items(),
         key=lambda it: (it[1].get("order", 0) if isinstance(it[1], dict) else 0, it[0]),
@@ -132,7 +138,7 @@ def build_regions_from_kv(kv: dict) -> list[dict]:
     return regions
 
 
-def build_via_entry(filename: str, file_size: int, inference_result: dict) -> dict:
+def build_via_entry(filename: str, file_size: int, inference_result: dict) -> dict[str, Any]:
     kv = inference_result.get("kv")
     if not isinstance(kv, dict):
         kv = {}
@@ -144,39 +150,77 @@ def build_via_entry(filename: str, file_size: int, inference_result: dict) -> di
     }
 
 
-def main():
-    if not os.path.isdir(img_dir):
-        print(f"[ERROR] 이미지 디렉터리가 없습니다: {img_dir}")
+def via_result_key(filename: str, file_size: int) -> str:
+    return f"{filename}{file_size}"
+
+
+def list_image_filenames(img_dir: Path) -> list[str]:
+    return sorted(
+        f.name
+        for f in img_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+def post_workflow_for_image(
+    img_path: Path,
+    file_name: str,
+    *,
+    url: str,
+    payload: dict[str, Any],
+    timeout: float,
+) -> requests.Response:
+    ct = content_type_for(img_path)
+    with img_path.open("rb") as f:
+        files = [("file", (file_name, f, ct))]
+        return requests.request("POST", url, data=payload, files=files, timeout=timeout)
+
+
+@dataclass(frozen=True)
+class RunPaths:
+    img_dir: Path
+    result_dir: Path
+
+    @property
+    def output_json(self) -> Path:
+        return self.result_dir / "result.json"
+
+    @property
+    def response_jsonl(self) -> Path:
+        return self.result_dir / "response.jsonl"
+
+
+def run(paths: RunPaths, *, url: str = WORKFLOW_URL, payload: dict[str, Any] | None = None) -> None:
+    payload = payload or workflow_payload()
+    if not paths.img_dir.is_dir():
+        print(f"[ERROR] 이미지 디렉터리가 없습니다: {paths.img_dir}")
         return
 
-    os.makedirs(result_dir, exist_ok=True)
+    paths.result_dir.mkdir(parents=True, exist_ok=True)
 
-    names = sorted(
-        f
-        for f in os.listdir(img_dir)
-        if os.path.isfile(os.path.join(img_dir, f))
-        and os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS
-    )
+    names = list_image_filenames(paths.img_dir)
     total = len(names)
-    print(f"[시작] 대상 이미지: {total}개 ({img_dir})")
-    print(f"[시작] 결과 파일 (API만으로 VIA 형식): {output_path}")
-    print(f"[시작] 원본 응답 (JSONL): {jsonl_path}")
+    print(f"[시작] 대상 이미지: {total}개 ({paths.img_dir})")
+    print(f"[시작] 결과 파일 (API만으로 VIA 형식): {paths.output_json}")
+    print(f"[시작] 원본 응답 (JSONL): {paths.response_jsonl}")
 
-    result_root: dict = {}
+    result_root: dict[str, Any] = {}
 
-    with open(jsonl_path, "w", encoding="utf-8") as jsonl_out:
+    with paths.response_jsonl.open("w", encoding="utf-8") as jsonl_out:
         for i, file_name in enumerate(names, start=1):
-            img_path = os.path.join(img_dir, file_name)
-            file_size = os.path.getsize(img_path)
-            ct = content_type_for(img_path)
+            img_path = paths.img_dir / file_name
+            file_size = img_path.stat().st_size
             print(f"[{i}/{total}] 요청 중: {file_name}")
 
+            t0 = time.perf_counter()
             try:
-                with open(img_path, "rb") as f:
-                    files = [("file", (file_name, f, ct))]
-                    response = requests.request(
-                        "POST", url, data=payload, files=files, timeout=120
-                    )
+                response = post_workflow_for_image(
+                    img_path,
+                    file_name,
+                    url=url,
+                    payload=payload,
+                    timeout=HTTP_TIMEOUT,
+                )
             except OSError as e:
                 print(f"    -> 실패 (파일): {e}")
                 line = {
@@ -186,6 +230,7 @@ def main():
                 jsonl_out.write(json.dumps(line, ensure_ascii=False) + "\n")
                 continue
 
+            elapsed_sec = time.perf_counter() - t0
             body = parse_response_body(response)
             jsonl_out.write(
                 json.dumps(
@@ -200,29 +245,56 @@ def main():
             )
 
             if response.status_code != 200:
-                print(f"    -> 실패 HTTP {response.status_code}")
+                print(
+                    f"    -> 실패 HTTP {response.status_code} "
+                    f"(응답까지 {elapsed_sec:.2f}s)"
+                )
                 continue
 
             inference_result = extract_inference_result(body)
             if not inference_result:
-                print("    -> 경고: inference_result 없음 — result.json에는 미반영")
+                print(
+                    "    -> 경고: inference_result 없음 — result.json에는 미반영 "
+                    f"(응답까지 {elapsed_sec:.2f}s)"
+                )
                 continue
 
             entry = build_via_entry(file_name, file_size, inference_result)
-            top_key = f"{file_name}{file_size}"
-            result_root[top_key] = entry
+            result_root[via_result_key(file_name, file_size)] = entry
 
             print(
                 f"    -> 완료 HTTP {response.status_code} "
                 f"regions={len(entry['regions'])} "
-                f"({len(response.content)} bytes)"
+                f"({len(response.content)} bytes, 응답까지 {elapsed_sec:.2f}s)"
             )
 
-    with open(output_path, "w", encoding="utf-8") as f:
+    with paths.output_json.open("w", encoding="utf-8") as f:
         json.dump(result_root, f, ensure_ascii=False, indent=4)
 
-    print(f"[완료] {len(result_root)}개 항목 저장: {output_path}")
-    print(f"[완료] 원본 응답 저장: {jsonl_path}")
+    print(f"[완료] {len(result_root)}개 항목 저장: {paths.output_json}")
+    print(f"[완료] 원본 응답 저장: {paths.response_jsonl}")
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="워크플로 API로 이미지 일괄 추론 후 VIA/JSONL 저장")
+    p.add_argument(
+        "--img-dir",
+        type=Path,
+        default="./dataset_sampled/images/",
+        help=f"입력 이미지 디렉터리",
+    )
+    p.add_argument(
+        "--result-dir",
+        type=Path,
+        default="./result/",
+        help=f"결과 저장 디렉터리",
+    )
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    run(RunPaths(img_dir=args.img_dir, result_dir=args.result_dir))
 
 
 if __name__ == "__main__":
