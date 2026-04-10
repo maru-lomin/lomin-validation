@@ -9,8 +9,12 @@ APP="/app"
 RESULT_DIR="${APP}/result"
 PYTHON_BIN="/install/.venv/bin/python"
 
-WORKFLOW_URL=https://beta.zixy.io/cognition-api/api/v1/workflows/api/apis
+BASE_URL=https://beta.zixy.io
+WORKFLOW_URL=${BASE_URL}/cognition-api/api/v1/workflows/api/apis
 WORKFLOW_API_KEY=03e57dac1847ddfa296b8813f17c21c21de945e330f39b7
+AUTH_BASE_URL=${BASE_URL}/cognition-api/api/v2/account/login
+AUTH_EMAIL=team.data@lomin.ai
+AUTH_PASSWORD=1q2w3e4r!!
 
 # --- 데이터셋 (gt.json / images 공통 상위) ---
 DATASET_DIR="${DATASET_DIR:-./dataset_sampled_10_viatool}"
@@ -39,6 +43,7 @@ run_in_container() {
 run_in_container request_api.py \
   --workflow-url "${WORKFLOW_URL}" \
   --api-key "${WORKFLOW_API_KEY}" \
+  --auth-base-url "${AUTH_BASE_URL}" \
   --img-dir "${DATASET_IMAGES}" \
   --result-dir "${RESULT_DIR}"
 
