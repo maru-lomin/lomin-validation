@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import requests
+
+from login_module import CachedLominAuth, base_url_from_workflow_url
 
 HTTP_TIMEOUT = 300.0
 
@@ -23,12 +26,29 @@ CONTENT_TYPES = {
 
 
 def workflow_payload(*, api_key: str) -> dict[str, Any]:
+    """Legacy multipart: ``params`` JSON + separate ``api_option`` form field."""
     return {
         "params": json.dumps({"api_key": api_key}, ensure_ascii=False),
         "api_option": {
             "async_mode": False,
             "timeout": HTTP_TIMEOUT,
         },
+    }
+
+
+def workflow_payload_combined(*, api_key: str) -> dict[str, str]:
+    """Reference client shape: single ``params`` JSON including ``api_option``."""
+    return {
+        "params": json.dumps(
+            {
+                "api_key": api_key,
+                "api_option": {
+                    "async_mode": False,
+                    "timeout": HTTP_TIMEOUT,
+                },
+            },
+            ensure_ascii=False,
+        ),
     }
 
 
@@ -164,11 +184,19 @@ def post_workflow_for_image(
     url: str,
     payload: dict[str, Any],
     timeout: float,
+    headers: dict[str, str] | None = None,
 ) -> requests.Response:
     ct = content_type_for(img_path)
     with img_path.open("rb") as f:
         files = [("file", (file_name, f, ct))]
-        return requests.request("POST", url, data=payload, files=files, timeout=timeout)
+        return requests.request(
+            "POST",
+            url,
+            data=payload,
+            files=files,
+            timeout=timeout,
+            headers=headers,
+        )
 
 
 @dataclass(frozen=True)
@@ -191,6 +219,7 @@ def run(
     url: str,
     api_key: str,
     payload: dict[str, Any] | None = None,
+    auth: CachedLominAuth | None = None,
 ) -> None:
     payload = payload or workflow_payload(api_key=api_key)
     if not paths.img_dir.is_dir():
@@ -215,13 +244,29 @@ def run(
 
             t0 = time.perf_counter()
             try:
-                response = post_workflow_for_image(
-                    img_path,
-                    file_name,
-                    url=url,
-                    payload=payload,
-                    timeout=HTTP_TIMEOUT,
-                )
+
+                def _do_post(hdrs: dict[str, str] | None) -> requests.Response:
+                    return post_workflow_for_image(
+                        img_path,
+                        file_name,
+                        url=url,
+                        payload=payload,
+                        timeout=HTTP_TIMEOUT,
+                        headers=hdrs,
+                    )
+
+                req_headers: dict[str, str] | None = None
+                if auth is not None:
+                    req_headers = {
+                        "Authorization": auth.authorization_header_value(),
+                    }
+                response = _do_post(req_headers)
+                if auth is not None and response.status_code == 401:
+                    auth.invalidate()
+                    req_headers = {
+                        "Authorization": auth.authorization_header_value(),
+                    }
+                    response = _do_post(req_headers)
             except OSError as e:
                 print(f"    -> 실패 (파일): {e}")
                 line = {
@@ -312,6 +357,25 @@ def build_parser() -> argparse.ArgumentParser:
         type=_non_empty_str("--api-key"),
         help="워크플로 params의 api_key (Docker: `docker_run.sh` 기본값·환경 변수 참고)",
     )
+    p.add_argument(
+        "--auth-email",
+        default=None,
+        help="계정 로그인 이메일 (미지정 시 환경 변수 LOMIN_AUTH_EMAIL)",
+    )
+    p.add_argument(
+        "--auth-password",
+        default=None,
+        help="계정 로그인 비밀번호 (미지정 시 환경 변수 LOMIN_AUTH_PASSWORD)",
+    )
+    p.add_argument(
+        "--auth-base-url",
+        default=None,
+        type=str,
+        help=(
+            "로그인 API 베이스 URL (scheme://host[:port]). "
+            "미지정 시 --workflow-url 과 동일 호스트에서 유도"
+        ),
+    )
     return p
 
 
@@ -321,10 +385,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    email = (args.auth_email or os.environ.get("LOMIN_AUTH_EMAIL") or "").strip()
+    password = args.auth_password or os.environ.get("LOMIN_AUTH_PASSWORD") or ""
+    if (email or password) and not (email and password):
+        raise SystemExit(
+            "인증 사용 시 이메일·비밀번호가 모두 필요합니다 "
+            "(--auth-email / --auth-password 또는 "
+            "LOMIN_AUTH_EMAIL / LOMIN_AUTH_PASSWORD)"
+        )
+
+    if email and password:
+        auth_base = (args.auth_base_url or "").strip() or base_url_from_workflow_url(
+            args.workflow_url
+        )
+        login_timeout = min(60.0, HTTP_TIMEOUT)
+        auth = CachedLominAuth(
+            base_url=auth_base,
+            email=email,
+            password=password,
+            timeout=login_timeout,
+        )
+        payload = workflow_payload_combined(api_key=args.api_key)
+    else:
+        auth = None
+        payload = None
+
     run(
         RunPaths(img_dir=args.img_dir, result_dir=args.result_dir),
         url=args.workflow_url,
         api_key=args.api_key,
+        payload=payload,
+        auth=auth,
     )
 
 

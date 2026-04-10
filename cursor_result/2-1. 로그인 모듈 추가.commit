@@ -1,0 +1,7 @@
+Add optional Lomin login for workflow API calls
+
+Introduce login_module.py with sync POST to /cognition-api/api/v2/account/login,
+token caching, and origin derivation from the workflow URL. When auth credentials
+are supplied (CLI or LOMIN_AUTH_* env), request_api attaches Authorization and
+sends combined params JSON matching the reference client; otherwise behavior is
+unchanged. Retry once after invalidating the cache on HTTP 401.
