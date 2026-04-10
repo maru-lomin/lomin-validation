@@ -1,39 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 프로젝트 루트(데이터·result 경로 기준). 기본: 이 스크립트가 있는 디렉터리
-# SCRIPT_DIR=$(pwd)
+# --- 호스트·이미지 ---
 HOST_ROOT=$(pwd)
-IMAGE="evaluator:latest"
+# IMAGE="${IMAGE:-evaluator:latest}"
+IMAGE=evaluator:latest
+APP="/app"
+RESULT_DIR="${APP}/result"
+PYTHON_BIN="/install/.venv/bin/python"
 
-# gt.json / images / images_kv 공통 상위 디렉터리 (visualize.py 기본은 dataset_sampled)
-# 예: dataset_sampled_10 을 쓰려면  DATASET_DIR=dataset_sampled_10 ./docker_run.sh
-DATASET_DIR=./dataset_sampled_10
+WORKFLOW_URL=https://beta.zixy.io/cognition-api/api/v1/workflows/api/apis
+WORKFLOW_API_KEY=03e57dac1847ddfa296b8813f17c21c21de945e330f39b7
 
-# uv_run.sh와 동일: 호스트의 dataset/result를 /data에 마운트하고,
-# 앱·가상환경은 이미지의 /app을 사용 (uv run --directory /app).
-# 마운트된 /data(호스트 프로젝트 루트)에 쓰려면 호스트 UID/GID와 맞추는 것이 안전합니다.
-# NFS root_squash 등으로 컨테이너 root가 쓰기 거부되는 경우가 많습니다.
+# --- 데이터셋 (gt.json / images 공통 상위) ---
+DATASET_DIR="${DATASET_DIR:-./dataset_sampled_10_viatool}"
+DATASET_REL="${DATASET_DIR#./}"
+DATASET_IMAGES="${APP}/${DATASET_REL}/images"
+DATASET_GT="${APP}/${DATASET_REL}/gt.json"
+
 run_in_container() {
   docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
     -e MPLCONFIGDIR=/tmp/mplconfig \
     -e UV_CACHE_DIR=/tmp/uv-cache \
-    -v "${HOST_ROOT}:/data" \
-    -w /data \
+    -v "${HOST_ROOT}:${APP}" \
+    -w "${APP}" \
     "${IMAGE}" \
-    uv run --directory /app "$@"
+    "${PYTHON_BIN}" "$@"
 }
 
 ## 시각화 (GT VIA JSON: ${DATASET_DIR}/gt.json)
-# run_in_container visualize.py --via-json "/data/${DATASET_DIR}/gt.json" \
-#   --images-dir "/data/${DATASET_DIR}/images" --output-dir "/data/${DATASET_DIR}/images_kv"
+# run_in_container visualize.py \
+#   --via-json "${DATASET_GT}" \
+#   --images-dir "${DATASET_IMAGES}" \
+#   --output-dir "${APP}/${DATASET_REL}/images_kv"
 
-## API 요청
-run_in_container request_api.py --img-dir "/data/${DATASET_DIR}/images" \
-  --result-dir /data/result
+run_in_container request_api.py \
+  --workflow-url "${WORKFLOW_URL}" \
+  --api-key "${WORKFLOW_API_KEY}" \
+  --img-dir "${DATASET_IMAGES}" \
+  --result-dir "${RESULT_DIR}"
 
-## 평가
-run_in_container evaluate.py --gt-json "/data/${DATASET_DIR}/gt.json" --result-json /data/result/result.json \
-  --detail-txt /data/result/detail.txt --detail-xlsx /data/result/detail.xlsx --summary-txt /data/result/summary.txt
+run_in_container evaluate.py \
+  --gt-json "${DATASET_GT}" \
+  --result-json "${RESULT_DIR}/result.json" \
+  --detail-txt "${RESULT_DIR}/detail.txt" \
+  --detail-xlsx "${RESULT_DIR}/detail.xlsx" \
+  --summary-txt "${RESULT_DIR}/summary.txt"

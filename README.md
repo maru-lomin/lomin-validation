@@ -34,8 +34,14 @@ uv sync
 **1) API 추론 → `result/`**
 
 ```bash
-uv run request_api.py --img-dir dataset/images --result-dir result
+uv run request_api.py \
+  --workflow-url 'https://beta.zixy.io/cognition-api/api/v1/workflows/api/apis' \
+  --api-key 'YOUR_API_KEY' \
+  --img-dir dataset/images \
+  --result-dir result
 ```
+
+(`docker_run.sh` 상단의 `WORKFLOW_URL` / `WORKFLOW_API_KEY` 기본값과 맞추거나, `export` 후 `--workflow-url "$WORKFLOW_URL" --api-key "$WORKFLOW_API_KEY"` 로 넘겨도 됩니다.)
 
 **2) 평가**
 
@@ -61,7 +67,7 @@ uv run visualize.py \
 
 ### API 설정
 
-`request_api.py` 상단의 `WORKFLOW_URL`과 `workflow_payload()` 안의 `params`(API 키 등)는 사용 중인 환경에 맞게 수정해야 합니다.
+`request_api.py`는 **`--workflow-url`과 `--api-key`가 필수**입니다. Docker로 돌릴 때의 기본 URL·키는 **`docker_run.sh` 상단**의 `WORKFLOW_URL` / `WORKFLOW_API_KEY`(`: "${VAR:=...}"`)에 두고, 스크립트가 `request_api.py`에 넘깁니다. 로컬에서는 직접 인자로 주거나, 셸에서 `export`한 뒤 같은 이름으로 넘기면 됩니다.
 
 ## Docker
 
@@ -71,17 +77,19 @@ uv run visualize.py \
 ./docker_build.sh
 ```
 
-**실행**: 프로젝트 루트에서 `./docker_run.sh`를 실행합니다. 현재 디렉터리가 호스트 프로젝트 루트로 컨테이너의 `/data`에 마운트되고, 비 root 사용자(`--user`로 호스트 UID/GID)로 동작합니다.
+**실행**: 프로젝트 루트에서 `./docker_run.sh`를 실행합니다. 호스트 프로젝트 루트가 컨테이너의 `/app`에 마운트되므로, **소스 수정은 이미지 재빌드 없이** 호스트 파일만 고치면 다음 실행에 반영됩니다. Python 의존성은 이미지의 `/install/.venv`를 사용합니다 (`pyproject.toml` / `uv.lock` 변경 시 이미지 재빌드 필요). 비 root 사용자(`--user`로 호스트 UID/GID)로 동작합니다.
 
-- 사용할 데이터셋 상위 디렉터리는 환경 변수 `DATASET_DIR`으로 지정합니다 (기본값은 스크립트 내 설정).
+- 사용할 데이터셋 상위 디렉터리는 환경 변수 `DATASET_DIR`으로 지정합니다 (기본값은 스크립트 내 설정). 이미지 태그는 `IMAGE`로 덮어쓸 수 있습니다 (`evaluator:latest` 기본).
+- 워크플로 URL·API 키 **기본값**은 `docker_run.sh` 안의 `WORKFLOW_URL` / `WORKFLOW_API_KEY`에 있습니다. 실행 전에 환경 변수로 덮어쓸 수 있습니다.
 
 ```bash
 DATASET_DIR=./dataset ./docker_run.sh
+WORKFLOW_URL=https://example.com/your/workflow/api WORKFLOW_API_KEY=your_secret ./docker_run.sh
 ```
 
-스크립트는 `request_api.py`와 `evaluate.py`를 순서대로 호출합니다. 시각화 단계는 주석 처리되어 있으며, 필요하면 `docker_run.sh` 안의 `visualize.py` 호출을 풀고 경로를 `/data/...` 형태로 맞춥니다.
+스크립트는 `request_api.py`와 `evaluate.py`를 순서대로 호출합니다. 시각화 단계는 주석 처리되어 있으며, 필요하면 `docker_run.sh` 안의 `visualize.py` 호출을 풀고 경로를 `/app/...` 형태로 맞춥니다.
 
-**경로 주의**: 컨테이너 안에서는 `uv run --directory /app` 때문에 작업 디렉터리가 `/app`이 됩니다. 결과를 호스트 프로젝트에 쓰려면 **`--result-dir` 등은 `/data/result`처럼 절대 경로**로 두는 것이 안전합니다 (`docker_run.sh`에 반영됨).
+**경로 주의**: 작업 디렉터리는 `/app`입니다. 결과·데이터셋 경로는 **`/app/result`, `/app/<데이터셋>/...` 같은 절대 경로**로 맞춥니다 (`docker_run.sh`에 반영됨).
 
 오프라인 전달 예:
 

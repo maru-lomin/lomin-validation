@@ -9,11 +9,6 @@ from typing import Any
 
 import requests
 
-# --- paths & API defaults (script entrypoint uses these) ---
-
-# IMG_DIR = Path("./dataset_sampled/images/")
-# RESULT_DIR = Path("./result/")
-WORKFLOW_URL = "https://beta.zixy.io/cognition-api/api/v1/workflows/api/apis"
 HTTP_TIMEOUT = 300.0
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -27,9 +22,9 @@ CONTENT_TYPES = {
 }
 
 
-def workflow_payload() -> dict[str, Any]:
+def workflow_payload(*, api_key: str) -> dict[str, Any]:
     return {
-        "params": '{"api_key": "03e57dac1847ddfa296b8813f17c21c21de945e330f39b7"}',
+        "params": json.dumps({"api_key": api_key}, ensure_ascii=False),
         "api_option": {
             "async_mode": False,
             "timeout": HTTP_TIMEOUT,
@@ -190,8 +185,14 @@ class RunPaths:
         return self.result_dir / "response.jsonl"
 
 
-def run(paths: RunPaths, *, url: str = WORKFLOW_URL, payload: dict[str, Any] | None = None) -> None:
-    payload = payload or workflow_payload()
+def run(
+    paths: RunPaths,
+    *,
+    url: str,
+    api_key: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    payload = payload or workflow_payload(api_key=api_key)
     if not paths.img_dir.is_dir():
         print(f"[ERROR] 이미지 디렉터리가 없습니다: {paths.img_dir}")
         return
@@ -275,26 +276,56 @@ def run(paths: RunPaths, *, url: str = WORKFLOW_URL, payload: dict[str, Any] | N
     print(f"[완료] 원본 응답 저장: {paths.response_jsonl}")
 
 
-def parse_args() -> argparse.Namespace:
+def _non_empty_str(label: str):
+    def checker(value: str) -> str:
+        s = value.strip()
+        if not s:
+            raise argparse.ArgumentTypeError(f"{label}: 빈 문자열은 사용할 수 없습니다")
+        return s
+
+    return checker
+
+
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="워크플로 API로 이미지 일괄 추론 후 VIA/JSONL 저장")
     p.add_argument(
         "--img-dir",
         type=Path,
         default="./dataset_sampled/images/",
-        help=f"입력 이미지 디렉터리",
+        help="입력 이미지 디렉터리",
     )
     p.add_argument(
         "--result-dir",
         type=Path,
         default="./result/",
-        help=f"결과 저장 디렉터리",
+        help="결과 저장 디렉터리",
     )
-    return p.parse_args()
+    p.add_argument(
+        "--workflow-url",
+        required=True,
+        type=_non_empty_str("--workflow-url"),
+        help="워크플로 API URL (Docker: `docker_run.sh` 기본값·환경 변수 참고)",
+    )
+    p.add_argument(
+        "--api-key",
+        required=True,
+        type=_non_empty_str("--api-key"),
+        help="워크플로 params의 api_key (Docker: `docker_run.sh` 기본값·환경 변수 참고)",
+    )
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
-    run(RunPaths(img_dir=args.img_dir, result_dir=args.result_dir))
+    run(
+        RunPaths(img_dir=args.img_dir, result_dir=args.result_dir),
+        url=args.workflow_url,
+        api_key=args.api_key,
+    )
 
 
 if __name__ == "__main__":
