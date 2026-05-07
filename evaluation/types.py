@@ -49,3 +49,6 @@ class FileClassMetrics:
     gt_merged: BBox
     pred_merged: BBox
     iou: float
+    tp: float
+    fp: float
+    fn: float

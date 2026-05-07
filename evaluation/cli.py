@@ -16,7 +16,7 @@ from .via import assert_same_file_keys, load_by_filename
 
 def parse_args(base: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="gt.json vs result.json — 파일·class별 CER 및 value bbox IoU"
+        description="gt.json vs result.json — 파일·class별 CER·TP/FP/FN·F1 및 value bbox IoU"
     )
     parser.add_argument(
         "--gt-json",
@@ -40,7 +40,7 @@ def parse_args(base: Path) -> argparse.Namespace:
         "--summary-txt",
         type=Path,
         default=base / "result" / "summary.txt",
-        help="요약(전체·class별·파일별 CER 등) 저장 경로",
+        help="요약(전체·class별·파일별 F1·TP/FP/FN 등) 저장 경로",
     )
     parser.add_argument(
         "--detail-xlsx",
@@ -78,7 +78,7 @@ def main() -> None:
     print(f"요약 저장: {args.summary_txt}")
     print()
 
-    print_summary(agg)
+    print_summary(metrics, agg)
 
 
 if __name__ == "__main__":

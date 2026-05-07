@@ -1,4 +1,4 @@
-"""gt.json과 result.json(VIA) 비교로 파일·class별 CER과 병합 bbox IoU를 계산합니다."""
+"""gt.json과 result.json(VIA) 비교로 파일·class별 CER·TP/FP/FN·F1과 병합 bbox IoU를 계산합니다."""
 
 from __future__ import annotations
 

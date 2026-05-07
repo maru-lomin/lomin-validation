@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .geometry import format_xywh
+from .metrics import precision_recall_f1
 from .types import BBox, CerAggregate, FileClassMetrics
 
 SEP = "-" * 80
@@ -23,6 +24,7 @@ def format_file_class_metrics(m: FileClassMetrics) -> str:
         f"  ref({len(m.ref)}): {m.ref!r}\n"
         f"  hyp({len(m.hyp)}): {m.hyp!r}\n"
         f"  CER={m.cer:.4f} (dist={m.edit_distance})\n"
+        f"  TP={m.tp:.4f}, FP={m.fp:.4f}, FN={m.fn:.4f}\n"
         f"  bbox: GT 원본 {n_gt}개 → 합침 ({format_xywh(m.gt_merged)})\n"
         f"        pred 원본 {n_pr}개 → 합침 ({format_xywh(m.pred_merged)})\n"
         f"  IoU 비교: GT {format_xywh(m.gt_merged)}\n"
@@ -35,21 +37,34 @@ def print_file_class_metrics(m: FileClassMetrics) -> None:
     print(format_file_class_metrics(m), end="")
 
 
-def _append_global_summary_lines(lines: list[str], agg: CerAggregate) -> None:
-    if agg.macro_cer is not None:
+def _pair_f1(m: FileClassMetrics) -> float:
+    """파일·class 한 항목의 TP·FP·FN으로 F1."""
+    _, _, f1 = precision_recall_f1(m.tp, m.fp, m.fn)
+    return f1
+
+
+def _append_global_summary_lines(
+    lines: list[str], metrics: list[FileClassMetrics], agg: CerAggregate
+) -> None:
+    if metrics:
+        tp_s = sum(m.tp for m in metrics)
+        fp_s = sum(m.fp for m in metrics)
+        fn_s = sum(m.fn for m in metrics)
+        p, r, micro_f1 = precision_recall_f1(tp_s, fp_s, fn_s)
+        macro_f1 = sum(_pair_f1(m) for m in metrics) / len(metrics)
         lines.append(
-            f"Macro 평균 CER: {agg.macro_cer:.4f} "
-            f"(파일·class 항목 수: {len(agg.per_pair_cer)})"
+            f"전체 합산 TP={tp_s:.4f}, FP={fp_s:.4f}, FN={fn_s:.4f} "
+            f"(파일·class 항목 수: {len(metrics)})"
+        )
+        lines.append(
+            f"Macro F1 (항목별 F1 산술평균): {macro_f1:.4f}"
+        )
+        lines.append(
+            f"Micro Precision: {p:.4f}, Recall: {r:.4f}, F1: {micro_f1:.4f} "
+            f"(합산 TP·FP·FN 기준)"
         )
     else:
-        lines.append("Macro 평균 CER: (항목 없음)")
-    if agg.micro_cer is not None:
-        lines.append(
-            f"Micro 평균 CER: {agg.micro_cer:.4f} "
-            f"(총 ref 글자 수: {agg.total_ref_length})"
-        )
-    else:
-        lines.append("Micro 평균 CER: (ref 길이 합 0)")
+        lines.append("TP/FP/FN: (항목 없음)")
     if agg.mean_iou is not None:
         lines.append(
             f"평균 IoU (병합 bbox): {agg.mean_iou:.4f} "
@@ -59,17 +74,22 @@ def _append_global_summary_lines(lines: list[str], agg: CerAggregate) -> None:
         lines.append("평균 IoU: (항목 없음)")
 
 
-def print_summary(agg: CerAggregate) -> None:
+def print_summary(metrics: list[FileClassMetrics], agg: CerAggregate) -> None:
     print(SEP)
-    if agg.macro_cer is not None:
+    if metrics:
+        tp_s = sum(m.tp for m in metrics)
+        fp_s = sum(m.fp for m in metrics)
+        fn_s = sum(m.fn for m in metrics)
+        p, r, micro_f1 = precision_recall_f1(tp_s, fp_s, fn_s)
+        macro_f1 = sum(_pair_f1(m) for m in metrics) / len(metrics)
         print(
-            f"Macro 평균 CER: {agg.macro_cer:.4f} "
-            f"(항목 수: {len(agg.per_pair_cer)})"
+            f"전체 합산 TP={tp_s:.4f}, FP={fp_s:.4f}, FN={fn_s:.4f} "
+            f"(항목 수: {len(metrics)})"
         )
-    if agg.micro_cer is not None:
+        print(f"Macro F1 (항목별 F1 산술평균): {macro_f1:.4f}")
         print(
-            f"Micro 평균 CER: {agg.micro_cer:.4f} "
-            f"(총 ref 글자 수: {agg.total_ref_length})"
+            f"Micro Precision: {p:.4f}, Recall: {r:.4f}, F1: {micro_f1:.4f} "
+            f"(합산 TP·FP·FN 기준)"
         )
     if agg.mean_iou is not None:
         print(
@@ -129,6 +149,9 @@ def write_detail_xlsx(
                 f"{cls}_Pred",
                 f"{cls}_GT",
                 f"{cls}_CER",
+                f"{cls}_TP",
+                f"{cls}_FP",
+                f"{cls}_FN",
                 f"{cls}_Pred_bbox",
                 f"{cls}_GT_bbox",
                 f"{cls}_IoU",
@@ -142,13 +165,16 @@ def write_detail_xlsx(
         for cls in all_classes:
             m = by_key.get((fn, cls))
             if m is None:
-                row.extend(["", "", "", "", "", ""])
+                row.extend(["", "", "", "", "", "", "", "", "", ""])
             else:
                 row.extend(
                     [
                         m.hyp,
                         m.ref,
                         m.cer,
+                        m.tp,
+                        m.fp,
+                        m.fn,
                         format_xywh(m.pred_merged),
                         format_xywh(m.gt_merged),
                         m.iou,
@@ -166,6 +192,9 @@ def write_detail_xlsx(
         "Pred",
         "GT",
         "CER",
+        "TP",
+        "FP",
+        "FN",
         "edit_dist",
         "IoU",
         "Pred_bbox_merged",
@@ -184,6 +213,9 @@ def write_detail_xlsx(
                 m.hyp,
                 m.ref,
                 m.cer,
+                m.tp,
+                m.fp,
+                m.fn,
                 m.edit_distance,
                 m.iou,
                 format_xywh(m.pred_merged),
@@ -199,27 +231,32 @@ def write_detail_xlsx(
     wb.save(path)
 
 
-def _macro_micro_for_group(ms: list[FileClassMetrics]) -> tuple[float, float, int]:
-    """한 그룹(같은 class 또는 같은 파일)의 Macro CER, Micro CER, 항목 수."""
-    macro = sum(x.cer for x in ms) / len(ms)
-    dist_sum = sum(x.edit_distance for x in ms)
-    ref_sum = sum(len(x.ref) for x in ms)
-    micro = (dist_sum / ref_sum) if ref_sum > 0 else 0.0
-    return macro, micro, len(ms)
+def _tp_fp_fn_f1_micro_macro_for_group(
+    ms: list[FileClassMetrics],
+) -> tuple[float, float, float, float, float, int]:
+    """한 그룹: TP·FP·FN 합, Micro F1(합산 기준), Macro F1(항목별 F1 평균), 항목 수."""
+    tp = sum(x.tp for x in ms)
+    fp = sum(x.fp for x in ms)
+    fn = sum(x.fn for x in ms)
+    _, _, micro_f1 = precision_recall_f1(tp, fp, fn)
+    macro_f1 = sum(_pair_f1(x) for x in ms) / len(ms) if ms else 0.0
+    return tp, fp, fn, micro_f1, macro_f1, len(ms)
 
 
-def _macro_micro_rows_by_key(
+def _aggregate_f1_rows_by_key(
     metrics: list[FileClassMetrics],
     key: Callable[[FileClassMetrics], str],
-) -> list[tuple[str, float, float, int]]:
-    """metrics를 key로 묶어 각 그룹의 Macro/Micro CER 행을 만든다 (class별·파일별 공통)."""
+) -> list[tuple[str, float, float, float, float, float, int]]:
+    """metrics를 key로 묶어 각 그룹의 TP/FP/FN 합·Macro/Micro F1 행을 만든다."""
     grouped: dict[str, list[FileClassMetrics]] = defaultdict(list)
     for m in metrics:
         grouped[key(m)].append(m)
-    rows: list[tuple[str, float, float, int]] = []
+    rows: list[tuple[str, float, float, float, float, float, int]] = []
     for k in sorted(grouped.keys()):
-        macro, micro, n = _macro_micro_for_group(grouped[k])
-        rows.append((k, macro, micro, n))
+        tp, fp, fn, micro_f1, macro_f1, n = _tp_fp_fn_f1_micro_macro_for_group(
+            grouped[k]
+        )
+        rows.append((k, tp, fp, fn, macro_f1, micro_f1, n))
     return rows
 
 
@@ -233,44 +270,46 @@ def write_summary_txt(
 
     lines.append("전체 요약")
     lines.append("-" * 40)
-    _append_global_summary_lines(lines, agg)
+    _append_global_summary_lines(lines, metrics, agg)
 
     lines.append("")
-    lines.append("전체 파일에 대한 class별 CER")
     lines.append(
-        "(Macro: 해당 class가 등장하는 파일·class 항목별 CER의 산술평균, "
-        "Micro: 해당 class 항목들의 총 편집거리 / 총 ref 길이)"
+        "전체 파일에 대한 class별 집계 "
+        "(Macro F1: 항목별 F1 산술평균, Micro F1: 그룹 TP·FP·FN 합 기준)"
     )
     lines.append("-" * 40)
-    class_rows = _macro_micro_rows_by_key(metrics, lambda m: m.class_name)
+    class_rows = _aggregate_f1_rows_by_key(metrics, lambda m: m.class_name)
     if class_rows:
         w_class = max(len(r[0]) for r in class_rows)
         lines.append(
-            f"{'class':<{w_class}}  {'Macro_CER':>12}  {'Micro_CER':>12}  {'n':>4}"
+            f"{'class':<{w_class}}  {'Macro_F1':>10}  {'Micro_F1':>10}  "
+            f"{'TP':>10}  {'FP':>10}  {'FN':>10}  {'n':>4}"
         )
-        for cls, macro_c, micro_c, n in class_rows:
+        for cls, tp_g, fp_g, fn_g, macro_f1, micro_f1, n in class_rows:
             lines.append(
-                f"{cls:<{w_class}}  {macro_c:12.4f}  {micro_c:12.4f}  {n:4d}"
+                f"{cls:<{w_class}}  {macro_f1:10.4f}  {micro_f1:10.4f}  "
+                f"{tp_g:10.4f}  {fp_g:10.4f}  {fn_g:10.4f}  {n:4d}"
             )
     else:
         lines.append("(항목 없음)")
 
     lines.append("")
-    lines.append("전체 class에 대한 파일별 CER")
     lines.append(
-        "(Macro: 해당 파일 내 class별 CER의 산술평균, "
-        "Micro: 해당 파일 내 총 편집거리 / 총 ref 길이)"
+        "전체 class에 대한 파일별 집계 "
+        "(Macro F1: 항목별 F1 산술평균, Micro F1: 그룹 TP·FP·FN 합 기준)"
     )
     lines.append("-" * 40)
-    file_rows = _macro_micro_rows_by_key(metrics, lambda m: m.filename)
+    file_rows = _aggregate_f1_rows_by_key(metrics, lambda m: m.filename)
     if file_rows:
         w_file = max(len(r[0]) for r in file_rows)
         lines.append(
-            f"{'filename':<{w_file}}  {'Macro_CER':>12}  {'Micro_CER':>12}  {'n_cls':>5}"
+            f"{'filename':<{w_file}}  {'Macro_F1':>10}  {'Micro_F1':>10}  "
+            f"{'TP':>10}  {'FP':>10}  {'FN':>10}  {'n_cls':>5}"
         )
-        for fn, macro_c, micro_c, n in file_rows:
+        for fn, tp_g, fp_g, fn_g, macro_f1, micro_f1, n in file_rows:
             lines.append(
-                f"{fn:<{w_file}}  {macro_c:12.4f}  {micro_c:12.4f}  {n:5d}"
+                f"{fn:<{w_file}}  {macro_f1:10.4f}  {micro_f1:10.4f}  "
+                f"{tp_g:10.4f}  {fp_g:10.4f}  {fn_g:10.4f}  {n:5d}"
             )
     else:
         lines.append("(항목 없음)")

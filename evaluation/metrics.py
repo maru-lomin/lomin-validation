@@ -3,7 +3,7 @@ from __future__ import annotations
 from .edit_distance import cer_and_distance
 from .geometry import iou_xywh, union_bbox_xywh
 from .types import BBox, CerAggregate, FileClassMetrics, ValueItem
-from .via import _value_items_for_class, iter_file_class_pairs
+from .via import _value_items_for_class, iter_file_class_pairs, result_has_value_class
 
 
 def _text_and_rects_from_items(items: list[ValueItem]) -> tuple[str, list[BBox]]:
@@ -26,6 +26,11 @@ def compute_file_class_metrics(
     pred_m = union_bbox_xywh(pred_rects)
     iou_val = iou_xywh(gt_m, pred_m)
 
+    if result_has_value_class(res_entry, class_name):
+        tp, fp, fn = 1.0 - c, c, 0.0
+    else:
+        tp, fp, fn = 0.0, 0.0, 1.0
+
     return FileClassMetrics(
         filename=filename,
         class_name=class_name,
@@ -38,7 +43,21 @@ def compute_file_class_metrics(
         gt_merged=gt_m,
         pred_merged=pred_m,
         iou=iou_val,
+        tp=tp,
+        fp=fp,
+        fn=fn,
     )
+
+
+def precision_recall_f1(tp: float, fp: float, fn: float) -> tuple[float, float, float]:
+    denom_p = tp + fp
+    denom_r = tp + fn
+    precision = tp / denom_p if denom_p > 0 else 0.0
+    recall = tp / denom_r if denom_r > 0 else 0.0
+    if precision + recall == 0:
+        return precision, recall, 0.0
+    f1 = 2 * precision * recall / (precision + recall)
+    return precision, recall, f1
 
 
 def build_cer_aggregate(metrics: list[FileClassMetrics]) -> CerAggregate:

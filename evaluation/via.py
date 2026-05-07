@@ -118,6 +118,15 @@ def value_text_concat_for_class(entry: dict, class_name: str) -> str:
     return "".join(t for *_, t in items)
 
 
+def result_has_value_class(entry: dict, class_name: str) -> bool:
+    """result(VIA)에 해당 class의 value region이 하나라도 있으면 True."""
+    for region in entry.get("regions") or []:
+        ra = region.get("region_attributes") or {}
+        if ra.get("sub_class") == "value" and ra.get("class") == class_name:
+            return True
+    return False
+
+
 def iter_file_class_pairs(gt_entry: dict) -> list[str]:
     classes: set[str] = set()
     for region in gt_entry.get("regions") or []:
