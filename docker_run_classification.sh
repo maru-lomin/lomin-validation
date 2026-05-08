@@ -11,16 +11,19 @@ PYTHON_BIN="/install/.venv/bin/python"
 
 BASE_URL=https://beta.zixy.io
 WORKFLOW_URL=${BASE_URL}/cognition-api/api/v1/workflows/api/apis
-WORKFLOW_API_KEY=03e57dac1847ddfa296b8813f17c21c21de945e330f39b7
+WORKFLOW_API_KEY=c313d53e2f639dced276f5607dc5013b433aef505e79b63
 AUTH_BASE_URL=${BASE_URL}/cognition-api/api/v2/account/login
 AUTH_EMAIL=team.data@lomin.ai
 AUTH_PASSWORD=1q2w3e4r!!
 
 # --- 데이터셋 (gt.json / images 공통 상위) ---
-DATASET_DIR="${DATASET_DIR:-./dataset_sampled_10_viatool}"
+DATASET_DIR="${DATASET_DIR:-./dataset_classification}"
 DATASET_REL="${DATASET_DIR#./}"
 DATASET_IMAGES="${APP}/${DATASET_REL}/images"
-DATASET_GT="${APP}/${DATASET_REL}/gt.json"
+DATASET_GT="${APP}/${DATASET_REL}/gt.csv"
+RESULT_RESPONSE_JSONL="${RESULT_DIR}/response.jsonl"
+RESULT_EVALUATION_CSV="${RESULT_DIR}/evaluation.csv"
+RESULT_CONFUSION_MATRIX_PNG="${RESULT_DIR}/confusion_matrix.png"
 
 run_in_container() {
   docker run --rm \
@@ -34,14 +37,6 @@ run_in_container() {
     "${PYTHON_BIN}" "$@"
 }
 
-## 시각화 (GT VIA JSON: ${DATASET_DIR}/gt.json)
-# --via-json "${DATASET_GT}" \
-# run_in_container visualize.py \
-#   --via-json "${RESULT_DIR}/result.json" \
-#   --images-dir "${DATASET_IMAGES}" \
-#   --output-dir "${RESULT_DIR}/images_kv_result"
-#   # --output-dir "${APP}/${DATASET_REL}/images_kv"
-
 run_in_container request_api.py \
   --workflow-url "${WORKFLOW_URL}" \
   --api-key "${WORKFLOW_API_KEY}" \
@@ -50,9 +45,8 @@ run_in_container request_api.py \
   --result-dir "${RESULT_DIR}"
 
 run_in_container evaluate.py \
-  --mode kv \
-  --gt-json "${DATASET_GT}" \
-  --result-json "${RESULT_DIR}/result.json" \
-  --detail-txt "${RESULT_DIR}/detail.txt" \
-  --detail-xlsx "${RESULT_DIR}/detail.xlsx" \
-  --summary-txt "${RESULT_DIR}/summary.txt"
+  --mode classification \
+  --gt-csv "${DATASET_GT}" \
+  --response-jsonl "${RESULT_RESPONSE_JSONL}" \
+  --evaluation-csv "${RESULT_EVALUATION_CSV}" \
+  --confusion-matrix-png "${RESULT_CONFUSION_MATRIX_PNG}"
