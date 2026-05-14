@@ -127,9 +127,10 @@ def result_has_value_class(entry: dict, class_name: str) -> bool:
     return False
 
 
-def iter_file_class_pairs(gt_entry: dict) -> list[str]:
+def iter_value_classes_for_entry(entry: dict) -> list[str]:
+    """VIA entry에 sub_class==value로 등장하는 class 이름 목록."""
     classes: set[str] = set()
-    for region in gt_entry.get("regions") or []:
+    for region in entry.get("regions") or []:
         ra = region.get("region_attributes") or {}
         if ra.get("sub_class") != "value":
             continue
@@ -137,6 +138,11 @@ def iter_file_class_pairs(gt_entry: dict) -> list[str]:
         if c:
             classes.add(c)
     return sorted(classes)
+
+
+def iter_file_class_pairs(gt_entry: dict) -> list[str]:
+    """GT entry에 등장하는 value class 목록 (하위 호환용 이름)."""
+    return iter_value_classes_for_entry(gt_entry)
 
 
 def _short_list_preview(names: list[str], limit: int = 20) -> str:

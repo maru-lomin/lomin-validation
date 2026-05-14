@@ -3,7 +3,11 @@ from __future__ import annotations
 from .edit_distance import cer_and_distance
 from .geometry import iou_xywh, union_bbox_xywh
 from .types import BBox, CerAggregate, FileClassMetrics, ValueItem
-from .via import _value_items_for_class, iter_file_class_pairs, result_has_value_class
+from .via import (
+    _value_items_for_class,
+    iter_value_classes_for_entry,
+    result_has_value_class,
+)
 
 
 def _text_and_rects_from_items(items: list[ValueItem]) -> tuple[str, list[BBox]]:
@@ -22,6 +26,9 @@ def compute_file_class_metrics(
     hyp, pred_rects = _text_and_rects_from_items(res_items)
 
     c, dist = cer_and_distance(ref, hyp)
+    if not ref and not hyp and result_has_value_class(res_entry, class_name):
+        c, dist = 1.0, max(dist, 1)
+
     gt_m = union_bbox_xywh(gt_rects)
     pred_m = union_bbox_xywh(pred_rects)
     iou_val = iou_xywh(gt_m, pred_m)
@@ -72,7 +79,7 @@ def build_cer_aggregate(metrics: list[FileClassMetrics]) -> CerAggregate:
 def evaluate_cer(
     common: list[str], gt_by: dict[str, dict], res_by: dict[str, dict]
 ) -> list[FileClassMetrics]:
-    """파일·class별 메트릭 목록."""
+    """파일·class별 메트릭 목록. class는 GT·result value 클래스의 합집합."""
     from .reporting import print_file_class_metrics
 
     metrics: list[FileClassMetrics] = []
@@ -80,7 +87,10 @@ def evaluate_cer(
     for fn in common:
         gt_e = gt_by[fn]
         res_e = res_by[fn]
-        for cls in iter_file_class_pairs(gt_e):
+        classes = set(iter_value_classes_for_entry(gt_e)) | set(
+            iter_value_classes_for_entry(res_e)
+        )
+        for cls in sorted(classes):
             m = compute_file_class_metrics(fn, gt_e, res_e, cls)
             metrics.append(m)
             print_file_class_metrics(m)
