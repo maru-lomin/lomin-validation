@@ -25,5 +25,5 @@ $env:UV_PYTHON = "$PWD\packages\uv-python\extract\python\python.exe"
 
 ```powershell
 uv venv
-uv pip install --no-index --find-links packages/wheelhouse requests pandas notebook
+uv pip install --no-index --find-links packages/wheelhouse requests pandas notebook jupyter openpyxl
 ```
