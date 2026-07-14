@@ -1,5 +1,7 @@
 # 내부망 설치
 
+이 PC 기준: **uv 0.11.7** / **CPython 3.13.13** (Windows x86_64)
+
 ## uv
 
 `packages/uv`의 Windows용 zip을 압축 해제한 뒤 `uv.exe`를 PATH에 추가합니다.
@@ -15,7 +17,7 @@ $env:Path = "$PWD\packages\uv\extract;" + $env:Path
 
 ```powershell
 New-Item -ItemType Directory -Force -Path packages\uv-python\extract | Out-Null
-tar -xzf packages/uv-python/cpython-3.13.14-x86_64-pc-windows-msvc-install_only.tar.gz -C packages/uv-python/extract
+tar -xzf packages/uv-python/cpython-3.13.13-x86_64-pc-windows-msvc-install_only.tar.gz -C packages/uv-python/extract
 $env:UV_PYTHON = "$PWD\packages\uv-python\extract\python\python.exe"
 ```
 
@@ -25,5 +27,5 @@ $env:UV_PYTHON = "$PWD\packages\uv-python\extract\python\python.exe"
 
 ```powershell
 uv venv
-uv pip install --no-index --find-links packages/wheelhouse requests pandas notebook jupyter openpyxl
+uv pip install --no-index --find-links packages/wheelhouse -r packages/requirements-offline.txt
 ```
