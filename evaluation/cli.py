@@ -4,9 +4,8 @@ import argparse
 from pathlib import Path
 
 from .classification import evaluate_classification
-from .metrics import build_cer_aggregate, evaluate_cer
+from .metrics import build_text_aggregate, evaluate_cer
 from .reporting import (
-    SEP,
     print_summary,
     write_detail_txt,
     write_detail_xlsx,
@@ -27,6 +26,15 @@ def parse_args(base: Path) -> argparse.Namespace:
         choices=["kv", "classification"],
         default="kv",
         help="평가 모드 선택",
+    )
+    parser.add_argument(
+        "--kv-scoring",
+        choices=["edit_distance", "char_multiset"],
+        default="edit_distance",
+        help=(
+            "kv 모드 CER 정의: edit_distance(Levenshtein CER, 기본), "
+            "char_multiset(1-문자 multiset 재현율). WER은 항상 원문 기준."
+        ),
     )
     parser.add_argument(
         "--gt-json",
@@ -50,7 +58,7 @@ def parse_args(base: Path) -> argparse.Namespace:
         "--summary-txt",
         type=Path,
         default=base / "result" / "summary.txt",
-        help="요약(전체·class별·파일별 F1·TP/FP/FN 등) 저장 경로",
+        help="요약(전체·class별·파일별 CER/WER 등) 저장 경로",
     )
     parser.add_argument(
         "--detail-xlsx",
@@ -108,20 +116,27 @@ def main() -> None:
     common = assert_same_file_keys(gt_by, res_by)
 
     print(f"비교 대상 파일 수: {len(common)}")
-    print(SEP)
 
-    metrics = evaluate_cer(common, gt_by, res_by)
-    agg = build_cer_aggregate(metrics)
+    metrics, excluded_unverifiable = evaluate_cer(
+        common, gt_by, res_by, kv_scoring=args.kv_scoring
+    )
+    agg = build_text_aggregate(metrics)
 
-    write_detail_txt(args.detail_txt, metrics)
-    write_detail_xlsx(args.detail_xlsx, metrics, common)
-    write_summary_txt(args.summary_txt, metrics, agg)
+    write_detail_txt(args.detail_txt, metrics, kv_scoring=args.kv_scoring)
+    write_detail_xlsx(args.detail_xlsx, metrics, common, kv_scoring=args.kv_scoring)
+    write_summary_txt(
+        args.summary_txt,
+        metrics,
+        agg,
+        excluded_unverifiable,
+        kv_scoring=args.kv_scoring,
+    )
     print(f"상세 결과 저장: {args.detail_txt}")
     print(f"Excel 상세 저장: {args.detail_xlsx}")
     print(f"요약 저장: {args.summary_txt}")
     print()
 
-    print_summary(metrics, agg)
+    print_summary(metrics, agg, kv_scoring=args.kv_scoring)
 
 
 if __name__ == "__main__":

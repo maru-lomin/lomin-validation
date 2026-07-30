@@ -3,7 +3,8 @@ name = "evaluator"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+# 공유 서버에 3.13이 없으면 uv가 인터프리터를 못 찾아 sync가 끝나지 않습니다.
+requires-python = ">=3.11"
 dependencies = [
     "matplotlib>=3.10.8",
     "openpyxl>=3.1.5",

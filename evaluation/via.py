@@ -112,10 +112,29 @@ def merged_value_bbox_for_class(entry: dict, class_name: str) -> BBox:
     return union_bbox_xywh(value_rects_sorted_for_class(entry, class_name))
 
 
+def first_nonempty_text_from_items(items: list[ValueItem]) -> str:
+    """읽기 순으로 정렬된 value 항목 중 비어 있지 않은 첫 텍스트."""
+    for _x, _y, _w, _h, text in items:
+        if str(text).strip():
+            return str(text)
+    return str(items[0][4]) if items else ""
+
+
 def value_text_concat_for_class(entry: dict, class_name: str) -> str:
-    """sub_class==value 이고 class 일치: value 우선, 없으면 text. 박스 크기 반영 읽기 순."""
-    items = _value_items_for_class(entry, class_name)
-    return "".join(t for *_, t in items)
+    """sub_class==value 이고 class 일치: value 우선, 없으면 text.
+
+    같은 class의 region이 여러 개인 경우, 읽기 순으로 비어 있지 않은
+    첫 항목의 텍스트를 사용한다(이어붙이지 않음).
+    """
+    return first_nonempty_text_from_items(_value_items_for_class(entry, class_name))
+
+
+UNVERIFIABLE_GT_VALUE = "확인불가"
+
+
+def gt_is_unverifiable(entry: dict, class_name: str) -> bool:
+    """GT value 전체가 '확인불가'이면 True (채점 제외 대상)."""
+    return value_text_concat_for_class(entry, class_name).strip() == UNVERIFIABLE_GT_VALUE
 
 
 def result_has_value_class(entry: dict, class_name: str) -> bool:

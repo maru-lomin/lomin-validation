@@ -17,10 +17,9 @@ AUTH_EMAIL=team.data@lomin.ai
 AUTH_PASSWORD=1q2w3e4r!!
 
 # --- 데이터셋 (gt.json / images 공통 상위) ---
-DATASET_DIR="${DATASET_DIR:-./dataset_sampled_10_viatool}"
-DATASET_REL="${DATASET_DIR#./}"
-DATASET_IMAGES="${APP}/${DATASET_REL}/images"
-DATASET_GT="${APP}/${DATASET_REL}/gt.json"
+# DATASET_IMAGES="./images"
+# DATASET_GT="./convert_sample/gt.json"
+# DATASET_GT="./한도_공제/gt.json"
 
 run_in_container() {
   docker run --rm \
@@ -42,17 +41,27 @@ run_in_container() {
 #   --output-dir "${RESULT_DIR}/images_kv_result"
 #   # --output-dir "${APP}/${DATASET_REL}/images_kv"
 
-run_in_container request_api.py \
-  --workflow-url "${WORKFLOW_URL}" \
-  --api-key "${WORKFLOW_API_KEY}" \
-  --auth-base-url "${AUTH_BASE_URL}" \
-  --img-dir "${DATASET_IMAGES}" \
-  --result-dir "${RESULT_DIR}"
+# run_in_container request_api.py \
+#   --workflow-url "${WORKFLOW_URL}" \
+#   --api-key "${WORKFLOW_API_KEY}" \
+#   --auth-base-url "${AUTH_BASE_URL}" \
+#   --img-dir "${DATASET_IMAGES}" \
+#   --result-dir "${RESULT_DIR}"
 
+#BASE_DIR="./v7-정량평가-v1"
+BASE_DIR="./v13_855"
 run_in_container evaluate.py \
   --mode kv \
-  --gt-json "${DATASET_GT}" \
-  --result-json "${RESULT_DIR}/result.json" \
-  --detail-txt "${RESULT_DIR}/detail.txt" \
-  --detail-xlsx "${RESULT_DIR}/detail.xlsx" \
-  --summary-txt "${RESULT_DIR}/summary.txt"
+  --kv-scoring edit_distance \
+  --gt-json "${BASE_DIR}/gt.json" \
+  --result-json "${BASE_DIR}/result.json" \
+  --detail-txt "${BASE_DIR}/detail.txt" \
+  --detail-xlsx "${BASE_DIR}/detail.xlsx" \
+  --summary-txt "${BASE_DIR}/summary.txt"
+  # --kv-scoring edit_distance \
+  # --kv-scoring char_multiset \
+
+run_in_container generate_report.py \
+  --summary-txt "${BASE_DIR}/summary.txt" \
+  --detail-xlsx "${BASE_DIR}/detail.xlsx" \
+  --output-xlsx "${BASE_DIR}/report.xlsx"
